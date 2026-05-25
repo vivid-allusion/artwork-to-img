@@ -1,98 +1,96 @@
 #!/usr/bin/env python
-"""Unit tests for image_input feature."""
+"""Unit tests for multi-image markdown feature."""
 
 import sys
 from pathlib import Path
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.processing.context import ProcessingContext
-from src.api.client import ReplicateClient
+from src.processing.markdown_parser import extract_all_image_urls, extract_prompt_text
 
-def test_context_with_image_input():
-    """Test ProcessingContext includes image_input and output_format."""
-    context = ProcessingContext(
-        prompt_file=Path("test.txt"),
-        relative_path=Path("test.txt"),
-        prompts=["test prompt"],
-        model_id="test/model",
-        params={"num_images": 1},
-        pricing={"base_cost": 0.01},
-        profile_name="test_profile",
-        output_dir=Path("/tmp"),
-        image_input="https://example.com/image.png",
-        output_format="png"
-    )
 
-    assert context.image_input == "https://example.com/image.png"
-    assert context.output_format == "png"
-    print("✅ ProcessingContext correctly stores image_input and output_format")
+def test_extract_prompt_text():
+    """Test prompt extraction from first line."""
+    content = "A detective in a newspaper office.\n\n![image](https://example.com/1.png)\n\n![image](https://example.com/2.png)"
+    result = extract_prompt_text(content)
+    assert result == "A detective in a newspaper office."
+    print("✅ Prompt correctly extracted from line 1")
 
-def test_payload_construction():
-    """Test that API client correctly constructs payload with image_input."""
-    # This is a mock test - we can't actually call the API
-    test_params = {"num_images": 1}
-    image_input = "https://example.com/test.png"
-    output_format = "png"
 
-    # Simulate what the client does
-    payload = {
-        **test_params,
-        "prompt": "test prompt"
-    }
+def test_extract_single_image():
+    """Test extraction of single image URL."""
+    content = "A prompt.\n\n![image](https://example.com/ref.png)"
+    urls = extract_all_image_urls(content)
+    assert len(urls) == 1
+    assert urls[0] == "https://example.com/ref.png"
+    print("✅ Single image URL correctly extracted")
 
-    if image_input:
-        payload["image_input"] = [image_input]
 
-    if output_format:
-        payload["output_format"] = output_format
+def test_extract_multiple_images():
+    """Test extraction of multiple image URLs in order."""
+    content = "A prompt.\n\n![image](https://example.com/first.png)\n\n![image](https://example.com/second.png)\n\n![image](https://example.com/third.png)"
+    urls = extract_all_image_urls(content)
+    assert len(urls) == 3
+    assert urls[0] == "https://example.com/first.png"
+    assert urls[1] == "https://example.com/second.png"
+    assert urls[2] == "https://example.com/third.png"
+    print("✅ Multiple image URLs extracted in correct order")
 
-    assert "image_input" in payload
-    assert payload["image_input"] == [image_input]
-    assert payload["output_format"] == "png"
-    print("✅ Payload correctly includes image_input array and output_format")
 
-def test_validation_logic():
-    """Test validation logic for image parameters."""
-    # Test model with image_input
-    model_with_image = {
-        'profile_name': 'test',
-        'image_input': 'https://example.com/image.png',
-        'output_format': 'png'
-    }
+def test_extract_raw_urls():
+    """Test extraction of raw URLs (not markdown syntax)."""
+    content = "A prompt.\nhttps://example.com/raw.png\nhttps://example.com/another.png"
+    urls = extract_all_image_urls(content)
+    assert len(urls) == 2
+    assert urls[0] == "https://example.com/raw.png"
+    assert urls[1] == "https://example.com/another.png"
+    print("✅ Raw URLs correctly extracted")
 
-    # Check both parameters exist
-    has_image = bool(model_with_image.get('image_input'))
-    has_format = bool(model_with_image.get('output_format'))
 
-    assert has_image and has_format
-    print("✅ Validation correctly checks for both parameters")
+def test_mixed_formats():
+    """Test extraction of mixed markdown and raw URLs."""
+    content = "A prompt.\n![image](https://example.com/md.png)\nhttps://example.com/raw.png"
+    urls = extract_all_image_urls(content)
+    assert len(urls) == 2
+    assert urls[0] == "https://example.com/md.png"
+    assert urls[1] == "https://example.com/raw.png"
+    print("✅ Mixed formats correctly extracted")
 
-    # Test output_format validation
-    assert model_with_image['output_format'] == 'png'
-    print("✅ Output format validation works")
+
+def test_no_images_raises_error():
+    """Test that missing images raises ValueError."""
+    content = "Just a prompt, no images."
+    try:
+        extract_all_image_urls(content)
+        assert False, "Should have raised ValueError"
+    except ValueError:
+        print("✅ Correctly raises ValueError when no images found")
+
 
 def main():
     """Run all unit tests."""
     print("=" * 50)
-    print("Image Input Feature Unit Tests")
+    print("Multi-Image Markdown Feature Unit Tests")
     print("=" * 50)
 
     try:
-        test_context_with_image_input()
-        test_payload_construction()
-        test_validation_logic()
+        test_extract_prompt_text()
+        test_extract_single_image()
+        test_extract_multiple_images()
+        test_extract_raw_urls()
+        test_mixed_formats()
+        test_no_images_raises_error()
 
         print("\n" + "=" * 50)
-        print("🎉 All unit tests passed!")
+        print("All unit tests passed!")
         return 0
     except AssertionError as e:
-        print(f"\n❌ Test failed: {e}")
+        print(f"\nTest failed: {e}")
         return 1
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        print(f"\nUnexpected error: {e}")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
