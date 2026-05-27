@@ -12,7 +12,7 @@ def test_dry_run_with_multi_image():
     """Test dry run with markdown files containing multiple images."""
     print("Testing multi-image markdown feature with dry-run...")
 
-    cmd = [sys.executable, "-m", "src.main", "--dry-run", "--no-progress"]
+    cmd = [sys.executable, "-m", "src.main_simple", "--dry-run", "--no-progress"]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

@@ -102,7 +102,7 @@ class InputDiscovery:
         logger.info(f"Loaded {len(profiles)} profiles")
         return profiles
 
-    def get_active_models(
+    def get_all_models(
         self, profiles: Dict[str, Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """

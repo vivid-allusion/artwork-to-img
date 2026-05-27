@@ -3,6 +3,7 @@
 import os
 import time
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 from loguru import logger
@@ -69,62 +70,39 @@ class ReplicateClient:
         Raises:
             Exception: On API failure after retries
         """
-        # Build request payload - pure pass-through approach
-        clean_prompt = prompt.replace('\\"', '"')
+        payload = self._build_payload(prompt, params)
 
-        # Pass all parameters from profile directly to API
-        payload = {
-            **params,  # All profile parameters passed through unchanged
-            "prompt": clean_prompt,
-        }
-
-        # CRITICAL DEBUG: Log what we received and what we're sending
-        logger.debug(
-            f"CRITICAL DEBUG - Received params: {json.dumps(params, indent=2)}"
-        )
-        logger.debug(
-            f"CRITICAL DEBUG - Constructed payload: {json.dumps(payload, indent=2)}"
-        )
-
-        # Log the actual prompt being sent
-        logger.debug(f"Original prompt: {prompt}")
-        logger.debug(f"Clean prompt being sent: {clean_prompt}")
-        logger.debug(f"Clean prompt repr: {repr(clean_prompt)}")
-
-        # Save debug request if needed
         if debug:
             self._save_debug_request(model_id, payload)
 
-        # Capture exact payload with timestamp BEFORE API call
-        from datetime import datetime
-
-        intended_payload = {
-            "model_id": model_id,
-            "timestamp": datetime.now().isoformat(),
-            "intended_request": payload.copy(),  # What we intended to send
-            "actual_request": None,  # Will be filled after API call
-            "api_filtering_detected": False,
-        }
-
-        # Sequential processing with payload tracking
         result, actual_payload = self._call_with_retry(model_id, payload, debug)
 
-        # Update payload tracking with what was actually sent
-        intended_payload["actual_request"] = actual_payload
-        intended_payload["api_filtering_detected"] = self._detect_filtering(
-            payload, actual_payload
+        intended_payload = self._build_tracking_info(model_id, payload, actual_payload)
+
+        return {"result": result, "payload": intended_payload}
+
+    def _build_payload(self, prompt: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Build request payload with cleaned prompt."""
+        clean_prompt = prompt.replace('\\"', '"')
+        payload = {**params, "prompt": clean_prompt}
+
+        logger.debug(
+            f"Payload: {json.dumps(payload, indent=2)}, prompt: {clean_prompt}"
         )
 
-        # Log filtering detection
-        if intended_payload["api_filtering_detected"]:
-            filtered_params = self._get_filtered_parameters(payload, actual_payload)
-            logger.warning(f"API PARAMETER FILTERING DETECTED:")
-            logger.warning(f"  Model: {model_id}")
-            logger.warning(f"  Filtered parameters: {filtered_params}")
-            logger.warning(f"  This means the model doesn't support these parameters")
+        return payload
 
-        # Return both result and complete payload information
-        return {"result": result, "payload": intended_payload}
+    def _build_tracking_info(
+        self, model_id: str, payload: Dict[str, Any], actual_payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Build payload tracking information."""
+        return {
+            "model_id": model_id,
+            "timestamp": datetime.now().isoformat(),
+            "intended_request": payload.copy(),
+            "actual_request": actual_payload,
+            "api_filtering_detected": False,
+        }
 
     def _call_with_retry(
         self, model_id: str, payload: Dict[str, Any], debug: bool
@@ -147,20 +125,15 @@ class ReplicateClient:
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                logger.debug(f"API call attempt {attempt}/{self.max_retries}")
-
-                # Log the EXACT payload being sent to replicate.run
                 logger.debug(
-                    f"CRITICAL DEBUG - Payload sent to replicate.run: {json.dumps(payload, indent=2)}"
+                    f"API call attempt {attempt}/{self.max_retries}, "
+                    f"model={model_id}, input_keys={list(payload.keys())}"
                 )
-                print(f"🚀 Calling replicate.run('{model_id}', input=...)")
-                print(f"📋 Input keys: {list(payload.keys())}")
 
                 # Use replicate.run for synchronous execution
                 output = replicate.run(model_id, input=payload)
 
-                print(f"✅ replicate.run() completed successfully!")
-                print(f"📊 Output type: {type(output)}")
+                logger.debug(f"API call successful, output type: {type(output)}")
 
                 # Convert output to consistent format
                 result = self._format_output(output)
@@ -169,7 +142,6 @@ class ReplicateClient:
                 if debug:
                     self._save_debug_response(model_id, result)
 
-                logger.debug("API call successful")
                 # Return both result and actual payload that was sent
                 return result, payload
 
@@ -226,86 +198,36 @@ class ReplicateClient:
             # Single URL or other format
             return {"images": [{"url": str(output)}]}
 
-    def _save_debug_request(self, model_id: str, payload: Dict[str, Any]) -> None:
-        """Save debug request to file."""
+    def _save_debug_file(
+        self, prefix: str, model_id: str, data: Dict[str, Any]
+    ) -> None:
+        """Save debug data to JSON file."""
         debug_dir = Path("debug")
         debug_dir.mkdir(exist_ok=True)
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         safe_model_id = model_id.replace("/", "_").replace(":", "_")
-        filename = debug_dir / f"request_{timestamp}_{safe_model_id}.json"
+        filename = debug_dir / f"{prefix}_{timestamp}_{safe_model_id}.json"
 
         with open(filename, "w") as f:
-            json.dump(
-                {"model_id": model_id, "payload": payload, "timestamp": timestamp},
-                f,
-                indent=2,
-            )
+            json.dump(data, f, indent=2)
 
-        logger.debug(f"Saved debug request to {filename}")
+        logger.debug(f"Saved debug {prefix} to {filename}")
+
+    def _save_debug_request(self, model_id: str, payload: Dict[str, Any]) -> None:
+        """Save debug request to file."""
+        self._save_debug_file(
+            "request",
+            model_id,
+            {"model_id": model_id, "payload": payload, "timestamp": time.strftime("%Y%m%d_%H%M%S")},
+        )
 
     def _save_debug_response(self, model_id: str, response: Dict[str, Any]) -> None:
         """Save debug response to file."""
-        debug_dir = Path("debug")
-        debug_dir.mkdir(exist_ok=True)
+        self._save_debug_file(
+            "response",
+            model_id,
+            {"model_id": model_id, "response": response, "timestamp": time.strftime("%Y%m%d_%H%M%S")},
+        )
 
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        safe_model_id = model_id.replace("/", "_").replace(":", "_")
-        filename = debug_dir / f"response_{timestamp}_{safe_model_id}.json"
 
-        with open(filename, "w") as f:
-            json.dump(
-                {"model_id": model_id, "response": response, "timestamp": timestamp},
-                f,
-                indent=2,
-            )
-
-        logger.debug(f"Saved debug response to {filename}")
-
-    def _detect_filtering(
-        self, intended: Dict[str, Any], actual: Dict[str, Any]
-    ) -> bool:
-        """
-        Detect if API might filter parameters based on known model limitations.
-
-        Args:
-            intended: What we intended to send
-            actual: What was actually sent (currently same as intended)
-
-        Returns:
-            True if filtering likely occurred
-        """
-        # Known problematic parameters for common models
-        potentially_filtered = []
-
-        # Check for parameters that are commonly filtered
-        if "image_urls" in intended:
-            potentially_filtered.append("image_urls")
-        if "image_input" in intended:
-            potentially_filtered.append("image_input")
-
-        # For now, assume filtering occurred if we have potentially problematic parameters
-        return len(potentially_filtered) > 0
-
-    def _get_filtered_parameters(
-        self, intended: Dict[str, Any], actual: Dict[str, Any]
-    ) -> list:
-        """
-        Get list of parameters that were likely filtered out.
-
-        Args:
-            intended: What we intended to send
-            actual: What was actually sent
-
-        Returns:
-            List of potentially filtered parameter names
-        """
-        potentially_filtered = []
-
-        # Check for commonly filtered parameters
-        if "image_urls" in intended:
-            potentially_filtered.append("image_urls")
-        if "image_input" in intended:
-            potentially_filtered.append("image_input")
-
-        return potentially_filtered

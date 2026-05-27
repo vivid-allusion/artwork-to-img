@@ -7,7 +7,7 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.auth.onepassword import ensure_op_cli, ensure_op_auth, get_api_key, cleanup_session
+from src.auth.onepassword import ensure_op_cli, ensure_op_auth, get_api_key
 
 
 def main():
@@ -26,10 +26,6 @@ def main():
         logger.info("Step 3: Retrieving API key...")
         api_key = get_api_key()
         logger.success(f"✅ API key retrieved: {api_key[:8]}...")
-
-        logger.info("Step 4: Cleaning up session...")
-        cleanup_session()
-        logger.success("✅ Session cleaned up")
 
         logger.success("\n🎉 All authentication tests passed!")
         return 0

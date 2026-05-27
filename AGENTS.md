@@ -109,7 +109,7 @@
 ## Known Issues & Technical Notes
 
 ### Deprecated Code
-- The `config_loader` parameter in `MatrixProcessor.__init__` (src/processing/processor.py lines 19, 31, 39) is unused and kept for compatibility. Consider removing in future refactor.
+- `src/main.py` (362 lines) is a deprecated duplicate of `main_simple.py` + `orchestrator.py` - should be deleted
 
 ### Configuration Notes
 - README mentions `models.yaml` but it's not implemented - model configs are in profile YAML files
@@ -139,7 +139,7 @@
 ### Design Principles
 - **Fail-Fast Philosophy**: Current implementation stops on first error
 - **Minimalism**: Using existing dependencies (Pillow) rather than adding new ones
-- **Matrix Processing**: All prompts × all models processed sequentially
+- **Single-Profile Processing**: All files processed sequentially against one profile
 - **No Auto-Archiving**: Files remain in 04.INPUT after processing
 
 ### Known Issues
@@ -152,9 +152,8 @@
 - Limited error recovery options (conflicts with fail-fast philosophy)
 - No concurrent processing support
 - Manual configuration management (no validation UI)
-- main() function is 172 lines (src/main.py:72-244)
-- _process_file_model_combination() has 108 lines and 11 parameters
-- Duplicate profiles_with_fixes logic in main.py
+- main() function is 172 lines (src/main.py:72-244) - DEPRECATED FILE
+- Duplicate profiles_with_fixes logic in main.py - DEPRECATED FILE
 
 ### Project Metrics (as of 2025-01-09)
 - **Total Lines of Code**: 1,515
@@ -163,7 +162,6 @@
 - **Functions > 3 parameters**: 2
 - **Code Duplication**: profiles_with_fixes logic repeated twice (lines 200-207 and 229-237)
 - **Debug Statements**: 31 logger.debug/info calls
-- **Unused Parameters**: config_loader in MatrixProcessor (kept for compatibility)
 - **Completed Features**: 15 (all core functionality working)
 - **Active Issues**: 11 tasks requiring attention
 
@@ -239,14 +237,14 @@
 - `src/cli.py` - Command line argument parsing
 - `src/orchestrator.py` - Pipeline orchestration logic
 - `src/processing/validator.py` - Image validation logic
-- `src/processing/context.py` - Dataclasses (ProcessorConfig, CombinationProcessingContext, BatchProcessingContext)
+- `src/processing/context.py` - Dataclasses (ProcessorConfig, ProcessingContext)
 - `src/auth/auth.py` - Authentication logic
 - `src/auth/session_manager.py` - Session management
 - `src/exceptions.py` - Custom exception classes
 - `src/main_simple.py` - Simplified entry point
 
 ### Post-Refactoring Metrics
-- `src/main.py`: 361 lines (kept for compatibility)
+- `src/main.py`: 361 lines (kept for compatibility - DEPRECATED)
 - `src/main_simple.py`: 118 lines (new clean entry)
 - `src/processing/processor.py`: 271 lines (reduced from 343)
 - `src/auth/onepassword.py`: 10 lines (reduced from 173)
@@ -328,7 +326,7 @@
 ### Implementation Details
 - Image_input as single string (converts to array for API)
 - Only PNG output format supported
-- Same image applies to all prompts (matrix pattern preserved)
+- Same image applies to all prompts (all files processed with same profile)
 - No image downloading - URL passed directly to API
 
 ## Known Technical Debt
@@ -389,9 +387,71 @@
 5. **End-to-end testing**: Need real API call validation
 6. **Profile discovery**: Confirm new agnostic format works with discovery module
 
+## Matrix Processing Removal Complete (2026-05-25)
+
+### ✅ MAJOR REFACTOR: Single-Profile Processing Achieved
+**All 12 planned tasks completed successfully!**
+
+#### Core Implementation Changes
+- **Dataclasses**: Removed `BatchProcessingContext` and `CombinationProcessingContext` from `src/processing/context.py`
+- **Processor**: Renamed `MatrixProcessor` → `FileProcessor`, eliminated outer profile loop
+- **Orchestrator**: `discover_inputs_and_profile()` returns single profile with fail-fast validation
+- **Terminology**: All "matrix", "combinations", "file × model" references removed
+- **Progress Bars**: Now show "Processing file X of Y" format
+- **Cost Estimation**: Shows per-file + total batch cost (no profile multiplication)
+
+#### Files Modified
+- `src/processing/context.py` - 60 → 34 lines (2 dataclasses removed)
+- `src/processing/processor.py` - 281 → 235 lines (matrix loop removed)
+- `src/orchestrator.py` - 188 → 191 lines (single profile discovery)
+- `src/main_simple.py` - Updated all imports and function calls
+- `src/main.py` - Updated MatrixProcessor → FileProcessor references
+- `src/output/reporter.py` - Updated success report format
+- `src/utils/progress.py` - Updated docstring
+
+#### Verification Results
+- `--dry-run`: 20 files processed successfully with single profile
+- `--cost-estimation`: Correctly shows "20 files × $0.140 = $2.80"
+
+#### Remaining Technical Debt
+1. **Delete `src/main.py`** - 362 lines of deprecated duplicate (already in AGENTS.md cleanup list)
+2. **Remove unused imports** in `orchestrator.py` (`TIMESTAMP_FORMAT`, `validate_path_exists`, `GenericValidator`)
+3. **Standardize venv** - `venv_new` created, old `venv` has broken paths
+
 ### Implementation Principles Achieved
-Follows AI Model Agnosticism Manifesto perfectly:
-- "The script orchestrates. The profile configures. The API validates."
-- No hardcoded model logic anywhere in codebase
-- All profile parameters passed to API unchanged
-- Any future parameter automatically supported
+- "The code should describe what it does" - all names now reflect single-profile reality
+- Fail-fast validation ensures exactly one active profile
+- Progress and cost reporting accurate for actual workflow
+
+## Major Code Cleanup Complete (2026-05-25)
+
+### All 17 Refactor Tasks Completed Successfully
+**Source**: USER-FILES/07.TEMP/260525_182031_refactor_report.md
+
+#### Files Deleted
+- `src/main.py` - 362 lines of deprecated duplicate code removed
+
+#### Files Modified (10 total)
+- `src/api/client.py` - 311 → 273 lines (-38): Removed print() statements, consolidated debug logging, split `generate_image()` SRP violation, merged duplicate filtering methods, extracted `_save_debug_file()` helper
+- `src/output/writer.py` - 331 → 346 lines (+15 net): Replaced 17 print() with logger calls, refactored `save_image()` to use ImageSaveContext, simplified `_save_payload()` with extracted markdown builders
+- `src/orchestrator.py` - 191 → 187 lines (-4): Removed 3 unused imports (GenericValidator, TIMESTAMP_FORMAT, validate_path_exists)
+- `src/config/loader.py` - 83 → 71 lines (-12): Deleted 3 unused methods (get_wrapper_config, get_queue_config, get_notifications_config)
+- `src/processing/validator.py` - Fixed `validate_operational_requirements()` to check `model_id` instead of `endpoint`
+- `src/processing/discovery.py` - Renamed `get_active_models()` → `get_all_models()` for accuracy
+- `src/auth/auth.py` - 101 → 97 lines (-4): Removed redundant OP_CLI global, now imports from session_manager
+- `src/utils/path_resolver.py` - Moved late imports to top of file
+- `src/output/reporter.py` - 212 → 216 lines (+4): Extracted `_timestamp_footer()` helper
+- `run.py` - 159 → 153 lines (-6): Standardized venv path, removed venv_new references
+
+#### Files Verified as Active (Not Deleted)
+- `src/output/context.py` - ImageSaveContext actively used as type annotation and parameter
+- `src/auth/env.py` - Used by auth/__init__.py for env fallback authentication
+
+#### Additional Changes
+- `tests/test_image_input.py` - Updated to use `src.main_simple` instead of deprecated `src.main`
+
+#### Metrics
+- **Total lines removed**: ~450+
+- **Files modified**: 10
+- **Tasks completed**: 17/19 (2 cancelled - files actively used)
+- **All modified files compile successfully**

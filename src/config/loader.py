@@ -47,17 +47,11 @@ class ConfigLoader:
         except yaml.YAMLError as e:
             raise yaml.YAMLError(f"Invalid YAML in {config_path}: {e}")
 
-    def get_wrapper_config(self) -> Dict[str, Any]:
-        """Get wrapper-specific configuration."""
-        return self.config.get("wrapper", {})
-
-    def get_queue_config(self) -> Dict[str, Any]:
-        """Get queue management configuration."""
-        return self.config.get("queue", {})
-
-    def get_notifications_config(self) -> Dict[str, Any]:
-        """Get notifications configuration."""
-        return self.config.get("notifications", {})
+    def _create_discovery(self) -> InputDiscovery:
+        """Create InputDiscovery with standard paths."""
+        return InputDiscovery(
+            Path("USER-FILES/04.INPUT"), Path("USER-FILES/03.PROFILES")
+        )
 
     def load_profiles(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -66,9 +60,7 @@ class ConfigLoader:
         Returns:
             Dictionary of profile contents
         """
-        profiles_dir = Path("USER-FILES/03.PROFILES")
-        discovery = InputDiscovery(Path("USER-FILES/04.INPUT"), profiles_dir)
-        return discovery.discover_profiles()
+        return self._create_discovery().discover_profiles()
 
     def load_active_profiles(self) -> List[Dict[str, Any]]:
         """
@@ -77,7 +69,6 @@ class ConfigLoader:
         Returns:
             List of profile dictionaries
         """
-        profiles_dir = Path("USER-FILES/03.PROFILES")
-        discovery = InputDiscovery(Path("USER-FILES/04.INPUT"), profiles_dir)
+        discovery = self._create_discovery()
         profiles = discovery.discover_profiles()
-        return discovery.get_active_models(profiles)
+        return discovery.get_all_models(profiles)

@@ -47,25 +47,19 @@ def is_venv_valid(venv_path):
 def find_or_create_venv():
     """Find existing valid venv or create/repair one."""
     script_dir = Path(__file__).parent
-
     venv = script_dir / "venv"
-    venv_new = script_dir / "venv_new"
 
-    # Check existing venvs for validity
+    # Check if venv is valid
     if venv.exists() and is_venv_valid(venv):
         return venv
 
-    if venv_new.exists() and is_venv_valid(venv_new):
-        return venv_new
-
     # Venv exists but is broken - repair it
-    broken_venv = venv if venv.exists() else (venv_new if venv_new.exists() else None)
-    if broken_venv:
-        print(f"🔧 Broken virtual environment detected at {broken_venv} - repairing...")
-        shutil.rmtree(broken_venv)
+    if venv.exists():
+        print(f"Broken virtual environment detected at {venv} - repairing...")
+        shutil.rmtree(venv)
 
     # Create fresh venv
-    print("📦 Creating virtual environment...")
+    print("Creating virtual environment...")
 
     python_exec = find_python_executable()
     print(f"Using Python: {python_exec}")
@@ -75,10 +69,10 @@ def find_or_create_venv():
         subprocess.run(
             [python_exec, "-m", "venv", str(venv)], check=True, capture_output=True
         )
-        print("✅ Virtual environment created successfully")
+        print("Virtual environment created successfully")
         return venv
     except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to create virtual environment: {e}")
+        print(f"Failed to create virtual environment: {e}")
         print(f"Error output: {e.stderr.decode()}")
         sys.exit(1)
 

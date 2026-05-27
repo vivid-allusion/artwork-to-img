@@ -9,14 +9,14 @@ from .exceptions import AuthenticationError, ConfigurationError, ValidationError
 from .cli import parse_args
 from .orchestrator import (
     load_and_validate_config,
-    discover_inputs_and_profiles,
+    discover_inputs_and_profile,
     initialize_services,
     execute_processing,
     estimate_costs,
     generate_final_reports,
 )
 from .utils.logging import setup_logging
-from .processing.processor import MatrixProcessor
+from .processing.processor import FileProcessor
 from .output.reporter import Reporter
 
 
@@ -50,14 +50,13 @@ def handle_error(
     e: Exception,
     args=None,
     reporter: Optional[Reporter] = None,
-    processor: Optional[MatrixProcessor] = None,
-    active_models: Optional[List[Dict[str, Any]]] = None,
+    processor: Optional[FileProcessor] = None,
+    profile: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Handle and report errors."""
     logger.error(f"Fatal error: {e}")
 
-    # Try to save failure report
-    if reporter and processor and active_models:
+    if reporter and processor and profile:
         try:
             summary = {
                 "processed": processor.processed_count,
@@ -73,50 +72,40 @@ def main():
     """Main execution function."""
     args = parse_args()
 
-    # Initialize environment
     setup_environment(args)
 
-    # Initialize variables for error handling
     reporter = None
     processor = None
-    active_models = None
+    profile = None
 
     try:
-        # Load configuration
         config, config_loader = load_and_validate_config()
 
-        # Authenticate with 1Password
         api_key = authenticate_for_mode(args.dry_run)
 
-        # Discover inputs and profiles
-        prompt_files, active_models = discover_inputs_and_profiles(config)
+        prompt_files, profile = discover_inputs_and_profile(config)
 
-        # Initialize services
         output_writer, reporter, replicate_client, processor = initialize_services(
-            args, config, config_loader, api_key, active_models
+            args, config, config_loader, api_key, profile
         )
 
-        # Handle cost estimation mode
         if args.cost_estimation:
-            return estimate_costs(prompt_files, active_models, output_writer)
+            return estimate_costs(prompt_files, profile, output_writer)
 
-        # Execute main processing
-        success = execute_processing(args, processor, prompt_files, active_models)
+        success = execute_processing(args, processor, prompt_files, profile)
 
-        # Generate final reports
         return generate_final_reports(
-            processor, reporter, prompt_files, active_models, success
+            processor, reporter, prompt_files, profile, success
         )
 
     except KeyboardInterrupt:
         logger.warning("Interrupted by user")
         return 130
     except (AuthenticationError, ConfigurationError, ValidationError) as e:
-        # These are expected fail-fast errors - don't need full error handling
         logger.error(f"Error: {e}")
         return 1
     except Exception as e:
-        handle_error(e, args, reporter, processor, active_models)
+        handle_error(e, args, reporter, processor, profile)
         return 1
 
 

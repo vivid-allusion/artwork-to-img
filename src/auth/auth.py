@@ -1,14 +1,10 @@
 """Authentication module for Replicate API access."""
 import subprocess
-import shutil
 from pathlib import Path
 import yaml
 from loguru import logger
 from ..exceptions import AuthenticationError, ConfigurationError
-from .session_manager import ensure_op_cli, ensure_op_auth
-
-
-OP_CLI = shutil.which("op")
+from .session_manager import ensure_op_cli, ensure_op_auth, OP_CLI
 
 
 def load_auth_config() -> dict:

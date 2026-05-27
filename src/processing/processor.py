@@ -1,4 +1,4 @@
-"""Main processing loop with matrix handling."""
+"""Main processing loop for input files."""
 
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -6,28 +6,23 @@ from datetime import datetime
 import time
 from loguru import logger
 
-# Progress handling moved to utils.progress
 from ..api.client import ReplicateClient
 from ..output.writer import OutputWriter
 from ..output.reporter import Reporter
+from ..output.context import ImageSaveContext
 from .discovery import InputDiscovery
-from .context import (
-    ProcessingContext,
-    CombinationProcessingContext,
-    BatchProcessingContext,
-    ProcessorConfig,
-)
+from .context import ProcessingContext, ProcessorConfig
 from .validator import GenericValidator
 from ..exceptions import ValidationError
 from .markdown_parser import extract_all_image_urls
 
 
-class MatrixProcessor:
-    """Process all combinations of markdown files × active models."""
+class FileProcessor:
+    """Process input files against a single profile."""
 
     def __init__(self, config: ProcessorConfig):
         """
-        Initialize matrix processor with configuration.
+        Initialize processor with configuration.
 
         Args:
             config: ProcessorConfig containing all initialization parameters
@@ -36,7 +31,7 @@ class MatrixProcessor:
         self.output_writer = config.output_writer
         self.reporter = config.reporter
         self.dry_run = config.dry_run
-        self.debug = False  # Not in config, always False
+        self.debug = False
         self.save_payloads = config.save_payloads
         self.total_cost = 0.0
         self.processed_count = 0
@@ -46,141 +41,109 @@ class MatrixProcessor:
     def process_all(
         self,
         prompt_files: List[Tuple[Path, Path]],
-        active_models: List[Dict[str, Any]],
+        profile: Dict[str, Any],
         progress: Optional[Any] = None,
     ) -> bool:
         """
-        Process full matrix of files × models.
+        Process all input files against a single profile.
 
         Args:
             prompt_files: List of tuples (absolute_path, relative_path)
-            active_models: List of model info dictionaries
+            profile: Single profile info dictionary
             progress: Optional rich Progress bar
 
         Returns:
             True if all successful, False if any failures
         """
-        # Validate only operational requirements, not parameters
-        self.validator.validate_operational_requirements(active_models)
+        self.validator.validate_operational_requirements([profile])
 
-        total_combinations = len(prompt_files) * len(active_models)
-        logger.info(
-            f"Processing {total_combinations} combinations "
-            f"({len(prompt_files)} files × {len(active_models)} profiles)"
-        )
+        total_files = len(prompt_files)
+        profile_name = profile["profile_name"]
+        logger.info(f"Processing {total_files} files with profile '{profile_name}'")
 
-        # Initialize progress tracking
-        task_id = self._init_progress(progress, total_combinations)
+        task_id = self._init_progress(progress, total_files, profile_name)
 
         success = True
-        combination_num = 0
 
-        # Process each model
-        for model_info in active_models:
-            batch_ctx = BatchProcessingContext(
-                prompt_files=prompt_files,
-                models=[model_info],
-                output_dir=self.output_writer.output_dir,
-                progress=progress,
-                task_id=task_id,
-                start_combination=combination_num + 1,
+        for i, prompt_file_tuple in enumerate(prompt_files):
+            success = self._process_single_file(
+                prompt_file_tuple, profile, i + 1, total_files, progress, task_id
             )
-            success = self._process_model_batch(batch_ctx, success)
-            combination_num += len(prompt_files)
 
         return success
 
-    def _init_progress(self, progress: Optional[Any], total: int) -> Optional[int]:
+    def _init_progress(
+        self, progress: Optional[Any], total: int, profile_name: str
+    ) -> Optional[int]:
         """Initialize progress bar if available."""
         if progress:
-            return progress.add_task("Processing matrix", total=total)
+            return progress.add_task(
+                f"Processing files with '{profile_name}'", total=total
+            )
         return None
 
-    def _process_model_batch(self, ctx: BatchProcessingContext, success: bool) -> bool:
-        """Process all files for a single model using batch context."""
-        model_info = ctx.models[0]  # Processing one model at a time
-
-        # Process each file for this model (no profile subfolder)
-        total_combinations = len(ctx.prompt_files) * len(ctx.models)
-        for i, prompt_file_tuple in enumerate(ctx.prompt_files):
-            combo_ctx = CombinationProcessingContext(
-                model_info=model_info,
-                prompt_file_tuple=prompt_file_tuple,
-                output_dir=self.output_writer.output_dir,  # Use dated folder directly
-                combination_num=ctx.start_combination + i,
-                total_combinations=total_combinations,
-                progress=ctx.progress,
-                task_id=ctx.task_id,
-            )
-            success = self._process_single_combination(combo_ctx, success)
-
-        return success
-
-    def _process_single_combination(
-        self, ctx: CombinationProcessingContext, success: bool
+    def _process_single_file(
+        self,
+        prompt_file_tuple: Tuple[Path, Path],
+        profile: Dict[str, Any],
+        file_num: int,
+        total_files: int,
+        progress: Optional[Any],
+        task_id: Optional[int],
     ) -> bool:
-        """Process a single file-model combination using context."""
-        prompt_file, relative_path = ctx.prompt_file_tuple
-        profile_name = ctx.model_info["profile_name"]
+        """Process a single file."""
+        prompt_file, relative_path = prompt_file_tuple
+        profile_name = profile["profile_name"]
 
-        # Read markdown file content
         with open(prompt_file, "r", encoding="utf-8") as f:
             markdown_content = f.read()
 
-        # Extract all image URLs from markdown (preserves order)
         try:
             image_urls = extract_all_image_urls(markdown_content)
-            logger.debug(f"Extracted {len(image_urls)} image URL(s) from markdown: {image_urls}")
+            logger.debug(
+                f"Extracted {len(image_urls)} image URL(s) from markdown: {image_urls}"
+            )
         except ValueError as e:
             logger.error(f"No image URLs found in {prompt_file.name}")
             raise
 
-        # Load prompts (extracts from code block)
         discovery = InputDiscovery(prompt_file.parent, Path("dummy"))
         prompts = discovery.load_prompts(prompt_file)
 
-        logger.info(
-            f"Processing combination {ctx.combination_num}/{ctx.total_combinations}: "
-            f"{relative_path} + {profile_name}"
-        )
+        logger.info(f"Processing file {file_num}/{total_files}: {relative_path}")
 
-        # Update progress if available
-        if ctx.progress and ctx.task_id is not None:
-            ctx.progress.update(
-                ctx.task_id,
+        if progress and task_id is not None:
+            progress.update(
+                task_id,
                 advance=1,
-                description=f"[{ctx.combination_num}/{ctx.total_combinations}] {relative_path} + {profile_name}",
+                description=f"[{file_num}/{total_files}] {relative_path}",
             )
 
-        # Create processing context - merge image_input into parameters
-        params = ctx.model_info.get("parameters", {}).copy()
+        params = profile.get("parameters", {}).copy()
         params["image_input"] = image_urls
 
         context = ProcessingContext(
             prompt_file=prompt_file,
             relative_path=relative_path,
             prompts=prompts,
-            model_id=ctx.model_info.get("model_id", ctx.model_info.get("endpoint", "")),
-            params=params,  # Now includes image_input array
-            pricing=ctx.model_info.get("pricing", {}),
+            model_id=profile.get("model_id", profile.get("endpoint", "")),
+            params=params,
+            pricing=profile.get("pricing", {}),
             profile_name=profile_name,
-            output_dir=ctx.output_dir,
-            prompt_prefix=ctx.model_info.get("prompt_prefix", ""),
-            prompt_suffix=ctx.model_info.get("prompt_suffix", ""),
-            delay_between_requests=ctx.model_info.get("delay_between_requests", 0),
+            output_dir=self.output_writer.output_dir,
+            prompt_prefix=profile.get("prompt_prefix", ""),
+            prompt_suffix=profile.get("prompt_suffix", ""),
+            delay_between_requests=profile.get("delay_between_requests", 0),
         )
 
-        # Process with context
         try:
             self._process_with_context(context)
         except Exception as e:
-            logger.error(f"Failed processing {relative_path} + {profile_name}: {e}")
+            logger.error(f"Failed processing {relative_path}: {e}")
             self.failed_count += 1
-            success = False
-            # Fail-fast philosophy
             raise
 
-        return success
+        return True
 
     def _process_with_context(self, context: ProcessingContext) -> None:
         """
@@ -189,17 +152,14 @@ class MatrixProcessor:
         Args:
             context: ProcessingContext with all required parameters
         """
-        # Get pricing
         base_cost = context.pricing.get("base_cost", 0.0)
 
-        # Process the single prompt (entire file content)
         if not context.prompts:
             logger.warning(f"Skipping empty prompt file: {context.relative_path}")
             return
 
-        prompt = context.prompts[0]  # Single prompt from entire file
+        prompt = context.prompts[0]
 
-        # Add prefix and suffix if provided
         prompt = self._apply_prompt_fixes(
             prompt, context.prompt_prefix, context.prompt_suffix
         )
@@ -210,10 +170,8 @@ class MatrixProcessor:
             logger.info(f"[DRY RUN] Would generate image for {context.relative_path}")
             return
 
-        # Generate and save image
         self._generate_and_save_image(prompt, context, base_cost)
 
-        # Apply delay if specified
         if context.delay_between_requests > 0:
             logger.info(
                 f"Waiting {context.delay_between_requests} seconds before next request"
@@ -237,22 +195,19 @@ class MatrixProcessor:
     ) -> None:
         """Generate image and save to disk."""
         try:
-            # Generate image with pure parameter pass-through
             response = self.replicate_client.generate_image(
                 model_id=context.model_id,
                 prompt=prompt,
-                params=context.params,  # All profile parameters passed through
+                params=context.params,
                 debug=self.debug,
             )
 
-            # Extract result and payload
             result = response["result"]
             payload = response["payload"]
 
-            # Save image
             timestamp = datetime.now().strftime("%H%M%S")
 
-            filename = self.output_writer.save_image(
+            save_context = ImageSaveContext(
                 image_url=result["images"][0]["url"],
                 timestamp=timestamp,
                 prompt_file_name=context.prompt_file.stem,
@@ -261,6 +216,8 @@ class MatrixProcessor:
                 relative_path=context.relative_path,
                 payload=payload if self.save_payloads else None,
             )
+
+            filename = self.output_writer.save_image(save_context)
 
             self.processed_count += 1
             self.total_cost += base_cost

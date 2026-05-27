@@ -1,5 +1,4 @@
 """1Password session management."""
-import atexit
 import os
 import subprocess
 import sys
@@ -74,16 +73,3 @@ def ensure_op_auth() -> None:
             error_msg = f"Authentication failed: {e}"
             logger.error(error_msg)
             raise AuthenticationError(error_msg) from e
-
-
-def cleanup_session() -> None:
-    """Clear 1Password session tokens from environment."""
-    env_vars = list(os.environ.keys())
-    for key in env_vars:
-        if key.startswith("OP_SESSION_"):
-            del os.environ[key]
-            logger.debug(f"Cleared session variable: {key}")
-
-
-# Register cleanup on exit
-atexit.register(cleanup_session)

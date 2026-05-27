@@ -28,64 +28,28 @@ class OutputWriter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.force_png = force_png
 
-    def save_image(
-        self,
-        image_url: str,
-        timestamp: str,
-        prompt_file_name: str,
-        model_name: str,
-        output_dir: Optional[Path] = None,
-        relative_path: Optional[Path] = None,
-        payload: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    def save_image(self, context: ImageSaveContext) -> str:
         """
         Download, validate, and save image using context.
 
         Args:
-            image_url: URL of generated image
-            timestamp: Timestamp string (HHMMSS)
-            prompt_file_name: Name of source prompt file (without extension)
-            model_name: Model nickname
-            output_dir: Optional specific output directory
-            relative_path: Optional relative path from input directory
-            payload: Optional API payload to save as JSON
+            context: ImageSaveContext with all required parameters
 
         Returns:
             Saved filename
         """
-        print(f"💾 Starting image save process...")
-        print(f"📷 Image URL: {image_url}")
-        print(f"⏰ Timestamp: {timestamp}")
-        print(f"📁 Prompt file: {prompt_file_name}")
-        print(f"🤖 Model: {model_name}")
-        # Create context for cleaner parameter passing
-        context = ImageSaveContext(
-            image_url=image_url,
-            timestamp=timestamp,
-            prompt_file_name=prompt_file_name,
-            model_name=model_name,
-            output_dir=output_dir if output_dir else self.output_dir,
-            relative_path=relative_path,
-            payload=payload,
+        logger.debug(
+            f"Saving image: {context.prompt_file_name}, model={context.model_name}, "
+            f"url={context.image_url}"
         )
 
-        # Process image through pipeline
-        print(f"⬇️  Downloading image from: {context.image_url}")
         image_data = self._download_image(context.image_url)
-        print(f"✅ Downloaded {len(image_data)} bytes")
-
-        print(f"🔄 Processing image data...")
         img, format_ext = self._process_image(image_data)
-        print(f"✅ Image processed, format: {format_ext}")
 
         save_path = self._determine_save_path(context, format_ext)
-        print(f"📁 Save path: {save_path}")
-
-        print(f"💾 Saving to disk...")
         self._save_to_disk(img, save_path)
-        print(f"✅ Successfully saved image to: {save_path}")
+        logger.info(f"Successfully saved image to: {save_path}")
 
-        # Save payload if provided
         if context.payload:
             self._save_payload(context, save_path)
 
@@ -104,17 +68,17 @@ class OutputWriter:
         Raises:
             requests.RequestException: If download fails
         """
-        print(f"🌐 Making HTTP request to: {image_url}")
-        print(f"⏰ Timeout: {DEFAULT_IMAGE_DOWNLOAD_TIMEOUT} seconds")
-
         response = requests.get(image_url, timeout=DEFAULT_IMAGE_DOWNLOAD_TIMEOUT)
-        print(f"📊 HTTP Status: {response.status_code}")
-        print(f"📦 Content-Type: {response.headers.get('content-type', 'unknown')}")
+        logger.debug(
+            f"Downloaded {len(response.content)} bytes, "
+            f"status={response.status_code}, "
+            f"content-type={response.headers.get('content-type', 'unknown')}"
+        )
 
         response.raise_for_status()
 
         content_length = len(response.content)
-        print(f"📐 Content length: {content_length} bytes")
+        logger.debug(f"Content length: {content_length} bytes")
 
         return response.content
 
@@ -236,63 +200,101 @@ class OutputWriter:
             image_path: Path where image was saved
         """
         payload_path = image_path.with_suffix(".md")
-
-        # Check if payload has filtering information
         payload_data = context.payload
+
         has_filtering_info = (
             isinstance(payload_data, dict) and "intended_request" in payload_data
         )
 
         if has_filtering_info:
-            # New format with filtering detection
-            intended = payload_data.get("intended_request", {})
-            actual = payload_data.get("actual_request", {})
-            filtering_detected = payload_data.get("api_filtering_detected", False)
-
-            markdown_content = f"""# API Payload Analysis
-
-## Image File
-`{image_path.name}`
-
-## Parameter Filtering Status
-{"⚠️ **API FILTERING DETECTED**" if filtering_detected else "✅ **No Filtering Detected**"}
-
-{f"The API likely filtered out unsupported parameters. See comparison below." if filtering_detected else "All intended parameters appear to be supported by the model."}
-
-## Intended Request (What We Tried to Send)
-```json
-{json.dumps(intended, indent=2, ensure_ascii=False)}
-```
-
-## Actual Request (What Was Actually Sent)
-```json
-{json.dumps(actual, indent=2, ensure_ascii=False)}
-```
-
-{f"## ⚠️ Potential Issues\n- Some parameters may not be supported by the `{payload_data.get('model_id', 'unknown')}` model\n- Check model documentation for supported parameters\n- Consider using a different model if image inputs are required\n" if filtering_detected else ""}
-## Timestamp
-Generated at: {context.timestamp}
-"""
+            markdown_content = self._build_filtering_payload_markdown(
+                payload_data, image_path.name, context.timestamp
+            )
         else:
-            # Legacy format
-            markdown_content = f"""# API Payload
-
-## Image File
-`{image_path.name}`
-
-## Request Details
-```json
-{json.dumps(payload_data, indent=2, ensure_ascii=False)}
-```
-
-## Timestamp
-Generated at: {context.timestamp}
-"""
+            markdown_content = self._build_simple_payload_markdown(
+                payload_data, image_path.name, context.timestamp
+            )
 
         with open(payload_path, "w", encoding="utf-8") as f:
             f.write(markdown_content)
 
         logger.debug(f"Saved payload to {payload_path}")
+
+    def _build_filtering_payload_markdown(
+        self, payload_data: Dict[str, Any], image_name: str, timestamp: str
+    ) -> str:
+        """Build markdown for payload with filtering detection info."""
+        intended = payload_data.get("intended_request", {})
+        actual = payload_data.get("actual_request", {})
+        filtering_detected = payload_data.get("api_filtering_detected", False)
+
+        title = "API Payload Analysis"
+        sections = [
+            ("Parameter Filtering Status", self._filtering_status(filtering_detected)),
+            ("Intended Request (What We Tried to Send)", intended),
+            ("Actual Request (What Was Actually Sent)", actual),
+        ]
+
+        lines = self._build_payload_base(title, image_name, timestamp, sections)
+
+        if filtering_detected:
+            model_id = payload_data.get("model_id", "unknown")
+            lines.extend([
+                "",
+                "## Potential Issues",
+                f"- Some parameters may not be supported by the `{model_id}` model",
+                "- Check model documentation for supported parameters",
+                "- Consider using a different model if image inputs are required",
+            ])
+
+        return "\n".join(lines) + "\n"
+
+    def _build_simple_payload_markdown(
+        self, payload_data: Dict[str, Any], image_name: str, timestamp: str
+    ) -> str:
+        """Build markdown for simple payload without filtering info."""
+        title = "API Payload"
+        sections = [("Request Details", payload_data)]
+        lines = self._build_payload_base(title, image_name, timestamp, sections)
+        return "\n".join(lines) + "\n"
+
+    def _filtering_status(self, detected: bool) -> str:
+        """Build filtering status section content."""
+        if detected:
+            return "**API FILTERING DETECTED**\n\nThe API likely filtered out unsupported parameters. See comparison below."
+        return "**No Filtering Detected**\n\nAll intended parameters appear to be supported by the model."
+
+    def _build_payload_base(
+        self,
+        title: str,
+        image_name: str,
+        timestamp: str,
+        sections: list,
+    ) -> list:
+        """Build common payload markdown structure."""
+        lines = [
+            f"# {title}",
+            "",
+            "## Image File",
+            f"`{image_name}`",
+            "",
+        ]
+
+        for section_title, content in sections:
+            lines.extend([
+                f"## {section_title}",
+                "```json",
+                json.dumps(content, indent=2, ensure_ascii=False),
+                "```",
+                "",
+            ])
+
+        lines.extend([
+            "## Timestamp",
+            f"Generated at: {timestamp}",
+        ])
+
+        return lines
 
     def _sanitize_path(self, path_str: str) -> str:
         """

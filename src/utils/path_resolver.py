@@ -1,8 +1,11 @@
 """Path resolution utilities with USER-FILES fallback."""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from loguru import logger
+
+from ..constants import TIMESTAMP_FORMAT
 
 
 USER_FILES_INPUT = Path("USER-FILES/04.INPUT")
@@ -88,9 +91,6 @@ def create_timestamped_output_path(base_path: Path) -> Path:
     Returns:
         Path to new timestamped directory
     """
-    from datetime import datetime
-    from src.constants import TIMESTAMP_FORMAT
-
     timestamp = datetime.now().strftime(TIMESTAMP_FORMAT)
     output_path = base_path / f"{timestamp}_IMAGE"
     output_path.mkdir(parents=True, exist_ok=True)
@@ -117,18 +117,3 @@ def validate_single_custom_input_path(profiles: list[Dict[str, Any]]) -> None:
             f"Multiple profiles have custom input paths: {custom_paths}. "
             "Only one custom input path is allowed."
         )
-
-
-def validate_path_exists(path: Path, path_type: str) -> None:
-    """
-    Validate path exists with fail-fast behavior.
-
-    Args:
-        path: Path to validate
-        path_type: Descriptive name for error messages
-
-    Raises:
-        FileNotFoundError: If path doesn't exist
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"{path_type} directory not found: {path}")
