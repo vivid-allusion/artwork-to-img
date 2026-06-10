@@ -6,11 +6,11 @@ from pathlib import Path
 import sys
 
 # Add src to path for testing
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from processing.validator import GenericValidator
-from processing.context import ProcessingContext
-from api.client import ReplicateClient
+from src.processing.validator import GenericValidator
+from src.processing.context import ProcessingContext
+from src.api.client import ReplicateClient
 
 
 class TestModelAgnosticism(unittest.TestCase):
